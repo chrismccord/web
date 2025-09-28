@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+web
+weg-go
+
+# Chrome installation
+.web-firefox/
+.claude
+
+# Screenshots and outputs
+*.png
+*.jpg
+*.jpeg
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
