@@ -94,7 +94,6 @@ func ensureFirefox() error {
 
 	// Check if Firefox executable exists
 	if _, err := os.Stat(firefoxExec); err == nil {
-		fmt.Printf("Using cached Firefox at: %s\n", firefoxDir)
 		return nil
 	}
 

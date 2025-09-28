@@ -1,11 +1,28 @@
-# web - portable web scraper for llms
+# web - shell command for simple LLM web browsing
 
-web browser for LLMs that converts web pages to markdown, executes js, and interacts with pages.
+shell-based web browser for LLMs that converts web pages to markdown, executes js, and interacts with pages.
+
+```bash
+# Convert a webpage to markdown
+web https://example.com
+
+# Take a screenshot while scraping
+web https://example.com --screenshot page.png
+
+# Execute JavaScript and capture log output along with markdown content
+web https://example.com --js "console.log(document.title)"
+
+# Fill and submit a form
+web https://login.example.com \
+    --form "login_form" \
+    --input "username" --value "myuser" \
+    --input "password" --value "mypass"
+```
 
 ## Features
 
 - **Self-contained executable** - Single native binary with no runtime dependencies
-- **Auto firefox download** - Downloads Firefox drivers automatically on first run
+- **Auto headless firefox download** - Downloads Firefox drivers automatically on first run
 - **Markdown conversion** - HTML to markdown conversion for optimized consumption by LLMs
 - **JavaScript execution** - Full browser engine with arbitrary js execution
 - **Phoenix LiveView support** - Detects and properly handles Phoenix LiveView applications
@@ -20,6 +37,8 @@ web browser for LLMs that converts web pages to markdown, executes js, and inter
    make              # Build ./web for your platform
    ./web https://example.com
    ```
+
+You can then `sudo cp web /usr/locla/bin` to make it available system wide
 
 ### Multi-platform Build
 
@@ -36,23 +55,23 @@ This creates:
 
 ```bash
 # Basic scraping
-./web https://example.com
+web https://example.com
 
 # Output raw HTML
-./web https://example.com --raw > output.html
+web https://example.com --raw > output.html
 
 # With truncation and screenshot
-./web example.com --screenshot screenshot.png --truncate-after 123
+web example.com --screenshot screenshot.png --truncate-after 123
 
 # Form submission with Phoenix LiveView support
-./web http://localhost:4000/users/log-in \
+web http://localhost:4000/users/log-in \
     --form "login_form" \
     --input "user[email]" --value "foo@bar" \
     --input "user[password]" --value "secret" \
     --after-submit "http://localhost:4000/authd/page"
 
 # Execute JavaScript on the page
-./web example.com --js "document.querySelector('button').click()"
+web example.com --js "document.querySelector('button').click()"
 
 # Use named session profile
 ./web --profile "mysite" https://authenticated-site.com
@@ -89,7 +108,6 @@ This tool has special support for Phoenix LiveView applications:
 
 - **Linux x64 or macOS** (Ubuntu 18.04+, RHEL 7+, Debian 9+, Arch Linux, macOS 10.12+)
 - **~100MB free space** (for Firefox on first run)
-- **Internet connection** (for Firefox download on first run)
 
 ### Linux System Packages
 
