@@ -38,7 +38,7 @@ web https://login.example.com \
    ./web https://example.com
    ```
 
-You can then `sudo cp web /usr/locla/bin` to make it available system wide
+You can then `sudo cp web /usr/local/bin` to make it available system wide
 
 ### Multi-platform Build
 
@@ -144,7 +144,6 @@ make clean        # Remove build artifacts
 ### Build Requirements
 
 - **Go 1.21+** (for building only)
-- **Internet connection** (to download Go dependencies)
 
 ## Architecture
 
