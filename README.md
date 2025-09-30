@@ -148,7 +148,7 @@ make clean        # Remove build artifacts
 
 ## Architecture
 
-- **Single Go binary** - No external runtime dependencies
+- **Single Go binary with standalone headless firefox download on first run** 
 - **Auto-download on first run** - Firefox and geckodriver downloaded to `~/.web-firefox/`
 - **Self-contained directory structure**:
   - `~/.web-firefox/firefox/` - Headless Firefox browser
