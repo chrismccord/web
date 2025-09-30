@@ -22,7 +22,6 @@ web https://login.example.com \
 ## Features
 
 - **Self-contained executable** - Single native Go binary with no runtime dependencies
-- **Auto browser download** - Downloads Firefox and geckodriver automatically on first run
 - **Markdown conversion** - HTML to markdown conversion for optimized consumption by LLMs
 - **JavaScript execution** - Full browser engine with arbitrary js execution and console log capture
 - **Complete logging** - Captures console.log/warn/error/info/debug and browser errors (JS errors, network errors, etc.)
