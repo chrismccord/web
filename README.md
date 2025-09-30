@@ -21,10 +21,11 @@ web https://login.example.com \
 
 ## Features
 
-- **Self-contained executable** - Single native binary with no runtime dependencies
-- **Auto headless firefox download** - Downloads Firefox drivers automatically on first run
+- **Self-contained executable** - Single native Go binary with no runtime dependencies
+- **Auto browser download** - Downloads Firefox and geckodriver automatically on first run
 - **Markdown conversion** - HTML to markdown conversion for optimized consumption by LLMs
-- **JavaScript execution** - Full browser engine with arbitrary js execution
+- **JavaScript execution** - Full browser engine with arbitrary js execution and console log capture
+- **Complete logging** - Captures console.log/warn/error/info/debug and browser errors (JS errors, network errors, etc.)
 - **Phoenix LiveView support** - Detects and properly handles Phoenix LiveView applications
 - **Screenshots** - Save full-page screenshots
 - **Form filling** - Automated form interaction with LiveView-aware submissions
@@ -107,7 +108,7 @@ This tool has special support for Phoenix LiveView applications:
 ## System Requirements
 
 - **Linux x64 or macOS** (Ubuntu 18.04+, RHEL 7+, Debian 9+, Arch Linux, macOS 10.12+)
-- **~100MB free space** (for Firefox on first run)
+- **~102MB free space** (for Firefox and geckodriver on first run)
 
 ### Linux System Packages
 
@@ -147,9 +148,12 @@ make clean        # Remove build artifacts
 
 ## Architecture
 
-- **Single Go binary** - No runtime dependencies
-- **Firefox engine** - Downloads Firefox drivers to `~/.web-firefox/` on first run
-- **Profile isolation** - Sessions stored in `~/.web-firefox/profiles/`
+- **Single Go binary** - No external runtime dependencies
+- **Auto-download on first run** - Firefox and geckodriver downloaded to `~/.web-firefox/`
+- **Self-contained directory structure**:
+  - `~/.web-firefox/firefox/` - Headless Firefox browser
+  - `~/.web-firefox/geckodriver/` - WebDriver automation binary
+  - `~/.web-firefox/profiles/` - Isolated session profiles for persistence
 - **Cross-platform** - Builds for macOS (Intel/ARM64) and Linux x86_64
 
 ## License

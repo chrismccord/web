@@ -10,9 +10,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/playwright-community/playwright-go"
 	"github.com/jaytaylor/html2text"
+	"github.com/tebeka/selenium"
+	"github.com/tebeka/selenium/log"
 )
 
 const DEFAULT_TRUNCATE_AFTER = 100000
@@ -23,15 +25,15 @@ type FormInput struct {
 }
 
 type Config struct {
-	URL           string
-	Profile       string
-	FormID        string
-	Inputs        []FormInput
+	URL            string
+	Profile        string
+	FormID         string
+	Inputs         []FormInput
 	AfterSubmitURL string
-	JSCode        string
+	JSCode         string
 	ScreenshotPath string
-	TruncateAfter int
-	RawFlag       bool
+	TruncateAfter  int
+	RawFlag        bool
 }
 
 func main() {
@@ -42,10 +44,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Ensure Firefox is installed
+	// Ensure Firefox and geckodriver are installed
 	err := ensureFirefox()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting up Firefox: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = ensureGeckodriver()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting up geckodriver: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -67,12 +75,12 @@ func ensureFirefox() error {
 	}
 
 	firefoxDir := filepath.Join(homeDir, ".web-firefox")
-	
+
 	// Platform-specific Firefox paths and URLs
 	var firefoxExec string
 	var firefoxUrl string
 	var firefoxSubdir string
-	
+
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
@@ -111,6 +119,149 @@ func ensureFirefox() error {
 
 	fmt.Printf("Firefox downloaded to: %s\n", firefoxDir)
 	return nil
+}
+
+func ensureGeckodriver() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not get home directory: %v", err)
+	}
+
+	geckoDir := filepath.Join(homeDir, ".web-firefox", "geckodriver")
+	var geckoExec string
+	var geckoUrl string
+
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm64" {
+			geckoExec = filepath.Join(geckoDir, "geckodriver")
+			geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-macos-aarch64.tar.gz"
+		} else {
+			geckoExec = filepath.Join(geckoDir, "geckodriver")
+			geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-macos.tar.gz"
+		}
+	case "linux":
+		geckoExec = filepath.Join(geckoDir, "geckodriver")
+		geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux64.tar.gz"
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	// Check if geckodriver exists
+	if _, err := os.Stat(geckoExec); err == nil {
+		return nil
+	}
+
+	// Download and extract geckodriver
+	fmt.Println("Geckodriver not found, downloading...")
+	err = downloadAndExtractTarGz(geckoUrl, geckoDir)
+	if err != nil {
+		return fmt.Errorf("failed to download geckodriver: %v", err)
+	}
+
+	// Make executable
+	if err := os.Chmod(geckoExec, 0755); err != nil {
+		return fmt.Errorf("failed to make geckodriver executable: %v", err)
+	}
+
+	fmt.Printf("Geckodriver downloaded to: %s\n", geckoDir)
+	return nil
+}
+
+func downloadAndExtractTarGz(url, destDir string) error {
+	// Create destination directory
+	err := os.MkdirAll(destDir, 0755)
+	if err != nil {
+		return fmt.Errorf("could not create directory %s: %v", destDir, err)
+	}
+
+	// Download the tar.gz file
+	fmt.Printf("Downloading from %s...\n", url)
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("could not download: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+
+	// Create temporary file
+	tempFile, err := os.CreateTemp("", "geckodriver-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("could not create temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	// Copy download to temp file
+	_, err = io.Copy(tempFile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("could not save download: %v", err)
+	}
+
+	tempFile.Close()
+
+	// Extract using tar command
+	fmt.Println("Extracting geckodriver...")
+	return extractTarGz(tempFile.Name(), destDir)
+}
+
+func extractTarGz(src, dest string) error {
+	// Use system tar command for simplicity
+	cmd := fmt.Sprintf("tar -xzf %s -C %s", src, dest)
+	if err := runCommand(cmd); err != nil {
+		return fmt.Errorf("failed to extract tar.gz: %v", err)
+	}
+	return nil
+}
+
+func runCommand(cmd string) error {
+	// Simple command execution
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	proc := &os.Process{}
+	attr := &os.ProcAttr{
+		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+	}
+
+	// Find the executable
+	executable, err := findExecutable(parts[0])
+	if err != nil {
+		return err
+	}
+
+	proc, err = os.StartProcess(executable, parts, attr)
+	if err != nil {
+		return err
+	}
+
+	state, err := proc.Wait()
+	if err != nil {
+		return err
+	}
+
+	if !state.Success() {
+		return fmt.Errorf("command failed: %s", cmd)
+	}
+
+	return nil
+}
+
+func findExecutable(name string) (string, error) {
+	// Simple path search
+	paths := []string{"/bin", "/usr/bin", "/usr/local/bin"}
+	for _, dir := range paths {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("executable not found: %s", name)
 }
 
 func downloadFirefox(url, destDir string) error {
@@ -171,7 +322,7 @@ func extractZip(src, dest string) error {
 		}
 
 		path := filepath.Join(dest, f.Name)
-		
+
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, f.FileInfo().Mode())
 			rc.Close()
@@ -203,76 +354,101 @@ func extractZip(src, dest string) error {
 	return nil
 }
 
-
 func processRequest(config Config) (string, error) {
 	baseURL := ensureProtocol(config.URL)
-	
-	// Get Firefox executable path
+
+	// Get Firefox and geckodriver paths
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("could not get home directory: %v", err)
 	}
 
 	firefoxDir := filepath.Join(homeDir, ".web-firefox")
+	geckoDriverPath := filepath.Join(firefoxDir, "geckodriver", "geckodriver")
+
 	var firefoxExec string
-	
 	switch runtime.GOOS {
 	case "darwin":
 		firefoxExec = filepath.Join(firefoxDir, "firefox", "Nightly.app", "Contents", "MacOS", "firefox")
 	case "linux":
 		firefoxExec = filepath.Join(firefoxDir, "firefox", "firefox", "firefox")
 	}
-	
-	pw, err := playwright.Run()
-	if err != nil {
-		return "", fmt.Errorf("could not start playwright: %v", err)
-	}
-	defer pw.Stop()
 
-	// Create profile directory for session persistence
+	// Start geckodriver service
+	service, err := selenium.NewGeckoDriverService(geckoDriverPath, 4444)
+	if err != nil {
+		return "", fmt.Errorf("could not start geckodriver service: %v", err)
+	}
+	defer service.Stop()
+
+	// Configure Firefox with profile
 	profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", config.Profile)
 	os.MkdirAll(profileDir, 0755)
 
-	// Launch Firefox with persistent context for session storage
-	context, err := pw.Firefox.LaunchPersistentContext(profileDir, playwright.BrowserTypeLaunchPersistentContextOptions{
-		Headless:       playwright.Bool(true),
-		ExecutablePath: playwright.String(firefoxExec),
-	})
-	if err != nil {
-		return "", fmt.Errorf("could not launch Firefox with persistent context: %v", err)
-	}
-	defer context.Close()
-
-	// Create new page
-	page, err := context.NewPage()
-	if err != nil {
-		return "", fmt.Errorf("could not create page: %v", err)
+	caps := selenium.Capabilities{
+		"browserName": "firefox",
+		"moz:firefoxOptions": map[string]interface{}{
+			"binary": firefoxExec,
+			"args":   []string{"-headless", "-profile", profileDir},
+			"prefs": map[string]interface{}{
+				"devtools.console.stdout.content": true,
+			},
+			"log": map[string]interface{}{
+				"level": "trace",
+			},
+		},
 	}
 
-	// Set up console message listener
-	var consoleMessages []string
-	page.On("console", func(msg playwright.ConsoleMessage) {
-		consoleMessages = append(consoleMessages, fmt.Sprintf("[%s] %s", strings.ToUpper(msg.Type()), msg.Text()))
-	})
+	// Create WebDriver
+	wd, err := selenium.NewRemote(caps, fmt.Sprintf("http://localhost:%d", 4444))
+	if err != nil {
+		return "", fmt.Errorf("could not create webdriver: %v", err)
+	}
+	defer wd.Quit()
 
 	// Navigate to page
-	_, err = page.Goto(baseURL)
-	if err != nil {
+	if err := wd.Get(baseURL); err != nil {
 		return "", fmt.Errorf("could not navigate to %s: %v", baseURL, err)
 	}
 
+	// Inject console capture script
+	_, err = wd.ExecuteScript(`
+		if (!window.__consoleMessages) {
+			window.__consoleMessages = [];
+			['log', 'warn', 'error', 'info', 'debug'].forEach(function(method) {
+				var original = console[method];
+				console[method] = function() {
+					var args = Array.prototype.slice.call(arguments);
+					var message = args.map(function(arg) {
+						if (typeof arg === 'object') {
+							try { return JSON.stringify(arg); }
+							catch(e) { return String(arg); }
+						}
+						return String(arg);
+					}).join(' ');
+					window.__consoleMessages.push({
+						level: method,
+						message: message
+					});
+					original.apply(console, arguments);
+				};
+			});
+		}
+	`, nil)
+	if err != nil {
+		fmt.Printf("Warning: Could not inject console capture: %v\n", err)
+	}
+
 	// Detect LiveView pages
-	isLiveView, err := page.Evaluate(`document.querySelector("[data-phx-session]") !== null`)
+	isLiveView, err := wd.ExecuteScript("return document.querySelector('[data-phx-session]') !== null", nil)
 	if err != nil {
 		isLiveView = false
 	}
-	
+
 	if isLiveView.(bool) {
 		fmt.Println("Detected Phoenix LiveView page, waiting for connection...")
 		// Wait for Phoenix LiveView to connect
-		_, err = page.WaitForSelector(".phx-connected", playwright.PageWaitForSelectorOptions{
-			Timeout: playwright.Float(10000), // 10 seconds
-		})
+		err = waitForSelector(wd, ".phx-connected", 10*time.Second)
 		if err != nil {
 			fmt.Printf("Warning: Could not detect LiveView connection: %v\n", err)
 		} else {
@@ -282,7 +458,7 @@ func processRequest(config Config) (string, error) {
 
 	// Handle form submission if specified
 	if config.FormID != "" && len(config.Inputs) > 0 {
-		err = handleForm(page, config, isLiveView.(bool))
+		err = handleForm(wd, config, isLiveView.(bool))
 		if err != nil {
 			return "", fmt.Errorf("error handling form: %v", err)
 		}
@@ -290,7 +466,7 @@ func processRequest(config Config) (string, error) {
 
 	// Execute JavaScript if provided
 	if config.JSCode != "" {
-		_, err = page.Evaluate(config.JSCode)
+		_, err = wd.ExecuteScript(config.JSCode, nil)
 		if err != nil {
 			fmt.Printf("Warning: JavaScript execution failed: %v\n", err)
 		}
@@ -298,12 +474,13 @@ func processRequest(config Config) (string, error) {
 
 	// Take screenshot if requested
 	if config.ScreenshotPath != "" {
-		_, err = page.Screenshot(playwright.PageScreenshotOptions{
-			Path:     &config.ScreenshotPath,
-			FullPage: playwright.Bool(true),
-		})
+		screenshot, err := wd.Screenshot()
 		if err != nil {
 			return "", fmt.Errorf("error taking screenshot: %v", err)
+		}
+		err = os.WriteFile(config.ScreenshotPath, screenshot, 0644)
+		if err != nil {
+			return "", fmt.Errorf("error saving screenshot: %v", err)
 		}
 		fmt.Printf("Screenshot saved to %s\n", config.ScreenshotPath)
 	}
@@ -311,18 +488,55 @@ func processRequest(config Config) (string, error) {
 	// Navigate to after-submit URL if provided
 	if config.AfterSubmitURL != "" {
 		fmt.Printf("Navigating to after-submit URL: %s\n", config.AfterSubmitURL)
-		_, err = page.Goto(config.AfterSubmitURL)
-		if err != nil {
+		if err := wd.Get(config.AfterSubmitURL); err != nil {
 			return "", fmt.Errorf("could not navigate to after-submit URL: %v", err)
 		}
 	}
 
 	// Get page content
-	content, err := page.Content()
+	content, err := wd.PageSource()
 	if err != nil {
 		return "", fmt.Errorf("could not get page content: %v", err)
 	}
 
+	// Collect ALL logs: console logs (console.log/warn/error) AND browser logs (JS errors, network errors)
+	var consoleMessages []string
+
+	// 1. Collect console.log/warn/error messages from our injected capture
+	capturedLogs, err := wd.ExecuteScript("return window.__consoleMessages || []", nil)
+	if err == nil {
+		if logArray, ok := capturedLogs.([]interface{}); ok {
+			for _, logEntry := range logArray {
+				if logMap, ok := logEntry.(map[string]interface{}); ok {
+					level := "LOG"
+					if lvl, ok := logMap["level"].(string); ok {
+						level = strings.ToUpper(lvl)
+						// Normalize 'warn' to 'warning' to match expected format
+						if level == "WARN" {
+							level = "WARNING"
+						}
+					}
+					message := ""
+					if msg, ok := logMap["message"].(string); ok {
+						message = msg
+					}
+					consoleMessages = append(consoleMessages, fmt.Sprintf("[%s] %s", level, message))
+				}
+			}
+		}
+	}
+
+	// 2. Collect browser logs (JavaScript errors, security errors, network errors, etc.)
+	browserLogs, err := wd.Log(log.Browser)
+	if err == nil {
+		for _, logEntry := range browserLogs {
+			level := strings.ToUpper(string(logEntry.Level))
+			// Only include WARN, ERROR, SEVERE logs from browser to avoid noise
+			if level == "WARNING" || level == "WARN" || level == "ERROR" || level == "SEVERE" {
+				consoleMessages = append(consoleMessages, fmt.Sprintf("[%s] %s", level, logEntry.Message))
+			}
+		}
+	}
 
 	// Return raw HTML if requested
 	if config.RawFlag {
@@ -345,7 +559,7 @@ func processRequest(config Config) (string, error) {
 
 	// Add header with URL and console messages
 	result := fmt.Sprintf("==========================\n%s\n==========================\n\n%s", baseURL, markdown)
-	
+
 	// Add console messages if any
 	if len(consoleMessages) > 0 {
 		result += "\n\n" + strings.Repeat("=", 50) + "\nCONSOLE OUTPUT:\n" + strings.Repeat("=", 50) + "\n"
@@ -357,12 +571,40 @@ func processRequest(config Config) (string, error) {
 	return result, nil
 }
 
-func handleForm(page playwright.Page, config Config, isLiveView bool) error {
+// waitForSelector waits for an element matching the selector to appear
+func waitForSelector(wd selenium.WebDriver, selector string, timeout time.Duration) error {
+	return wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+		_, err := wd.FindElement(selenium.ByCSSSelector, selector)
+		return err == nil, nil
+	}, timeout)
+}
+
+// waitForFunction waits for a JavaScript condition to be true
+func waitForFunction(wd selenium.WebDriver, jsCode string, timeout time.Duration) error {
+	return wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+		result, err := wd.ExecuteScript(jsCode, nil)
+		if err != nil {
+			return false, nil
+		}
+		if boolResult, ok := result.(bool); ok {
+			return boolResult, nil
+		}
+		return false, nil
+	}, timeout)
+}
+
+func handleForm(wd selenium.WebDriver, config Config, isLiveView bool) error {
 	// Fill form inputs
 	for _, input := range config.Inputs {
 		selector := fmt.Sprintf("#%s input[name='%s']", config.FormID, input.Name)
-		err := page.Fill(selector, input.Value)
+		elem, err := wd.FindElement(selenium.ByCSSSelector, selector)
 		if err != nil {
+			return fmt.Errorf("could not find input %s: %v", input.Name, err)
+		}
+		if err := elem.Clear(); err != nil {
+			return fmt.Errorf("could not clear input %s: %v", input.Name, err)
+		}
+		if err := elem.SendKeys(input.Value); err != nil {
 			return fmt.Errorf("could not fill input %s: %v", input.Name, err)
 		}
 	}
@@ -370,38 +612,44 @@ func handleForm(page playwright.Page, config Config, isLiveView bool) error {
 	if isLiveView {
 		// For LiveView, submit form and wait for loading states
 		formSelector := fmt.Sprintf("#%s", config.FormID)
-		
-		// Submit the form
-		err := page.Locator(formSelector).Press("Enter")
+		formElem, err := wd.FindElement(selenium.ByCSSSelector, formSelector)
 		if err != nil {
+			return fmt.Errorf("could not find LiveView form: %v", err)
+		}
+
+		// Submit the form by pressing Enter
+		if err := formElem.SendKeys(selenium.EnterKey); err != nil {
 			return fmt.Errorf("could not submit LiveView form: %v", err)
 		}
 
 		// Wait for LiveView loading states to complete
-		_, err = page.WaitForFunction("() => !document.querySelector('.phx-submit-loading')", playwright.PageWaitForFunctionOptions{
-			Timeout: playwright.Float(10000),
-		})
+		err = waitForFunction(wd, "return !document.querySelector('.phx-submit-loading')", 10*time.Second)
 		if err != nil {
 			fmt.Printf("Warning: Could not wait for submit loading: %v\n", err)
 		}
-		_, err = page.WaitForFunction("() => !document.querySelector('.phx-change-loading')", playwright.PageWaitForFunctionOptions{
-			Timeout: playwright.Float(5000),
-		})
+		err = waitForFunction(wd, "return !document.querySelector('.phx-change-loading')", 5*time.Second)
 		if err != nil {
 			fmt.Printf("Warning: Could not wait for change loading: %v\n", err)
 		}
-		
+
 		fmt.Println("LiveView form submitted and loading completed")
 	} else {
 		// For regular forms, click submit button or press enter
 		submitSelector := fmt.Sprintf("#%s input[type='submit'], #%s button[type='submit']", config.FormID, config.FormID)
-		err := page.Click(submitSelector)
+		elem, err := wd.FindElement(selenium.ByCSSSelector, submitSelector)
 		if err != nil {
 			// Try pressing Enter on the form if no submit button
 			formSelector := fmt.Sprintf("#%s", config.FormID)
-			err = page.Locator(formSelector).Press("Enter")
+			formElem, err := wd.FindElement(selenium.ByCSSSelector, formSelector)
 			if err != nil {
 				return fmt.Errorf("could not submit form: %v", err)
+			}
+			if err := formElem.SendKeys(selenium.EnterKey); err != nil {
+				return fmt.Errorf("could not submit form: %v", err)
+			}
+		} else {
+			if err := elem.Click(); err != nil {
+				return fmt.Errorf("could not click submit button: %v", err)
 			}
 		}
 		fmt.Println("Form submitted")
@@ -419,7 +667,7 @@ func parseArgs() Config {
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		
+
 		switch arg {
 		case "--help":
 			printHelp()
@@ -528,12 +776,12 @@ func cleanMarkdown(markdown string) string {
 	markdown = strings.ReplaceAll(markdown, "\n# ", "\n# ")
 	markdown = strings.ReplaceAll(markdown, "\n## ", "\n## ")
 	markdown = strings.ReplaceAll(markdown, "\n### ", "\n### ")
-	
+
 	// Collapse multiple blank lines
 	for strings.Contains(markdown, "\n\n\n") {
 		markdown = strings.ReplaceAll(markdown, "\n\n\n", "\n\n")
 	}
-	
+
 	// Normalize list bullets
 	lines := strings.Split(markdown, "\n")
 	for i, line := range lines {
@@ -541,6 +789,6 @@ func cleanMarkdown(markdown string) string {
 			lines[i] = "- " + strings.TrimPrefix(strings.TrimPrefix(line, "* "), "- ")
 		}
 	}
-	
+
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
