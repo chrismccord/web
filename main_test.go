@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -14,49 +16,110 @@ import (
 var (
 	testBinary   string
 	testProfile  string
+	testServerURL string
 	initialized  bool
+	serverOnce   sync.Once
 )
+
+// startTestServer starts a local HTTP server for testing
+func startTestServer() {
+	serverOnce.Do(func() {
+		mux := http.NewServeMux()
+
+		// Basic HTML page
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Test Page</title></head>
+<body>
+<h1>Test Page</h1>
+<p>This is a test page for web scraping.</p>
+<div id="content">Test content here</div>
+</body>
+</html>`)
+		})
+
+		// Page with form
+		mux.HandleFunc("/form", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Test Form</title></head>
+<body>
+<form id="test-form">
+<input name="username" type="text">
+<input name="password" type="password">
+<button type="submit">Submit</button>
+</form>
+</body>
+</html>`)
+		})
+
+		// Page with LiveView simulation
+		mux.HandleFunc("/liveview", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>LiveView Test</title></head>
+<body>
+<div data-phx-session="test-session" class="phx-connected">
+<h1>LiveView Page</h1>
+</div>
+</body>
+</html>`)
+		})
+
+		// Start server on port 9999
+		go http.ListenAndServe(":9999", mux)
+		testServerURL = "http://localhost:9999"
+
+		// Give server time to start
+		time.Sleep(100 * time.Millisecond)
+	})
+}
 
 // setupTest ensures the binary is built and available for testing
 func setupTest(t *testing.T) {
-	if initialized {
-		return
-	}
-
-	// Detect platform and set binary name
-	platform := strings.ToLower(runtime.GOOS)
-	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "amd64"
-	}
-	testBinary = fmt.Sprintf("web-%s-%s", platform, arch)
-
-	// Build the project if binary doesn't exist
-	if _, err := os.Stat(testBinary); os.IsNotExist(err) {
-		t.Logf("Building project...")
-		cmd := exec.Command("./build.sh")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("Failed to build project: %v\nOutput: %s", err, output)
+	if !initialized {
+		// Detect platform and set binary name
+		platform := strings.ToLower(runtime.GOOS)
+		arch := runtime.GOARCH
+		if arch == "amd64" {
+			arch = "amd64"
 		}
+		testBinary = fmt.Sprintf("web-%s-%s", platform, arch)
+
+		// Build the project if binary doesn't exist
+		if _, err := os.Stat(testBinary); os.IsNotExist(err) {
+			t.Logf("Building project...")
+			cmd := exec.Command("./build.sh")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("Failed to build project: %v\nOutput: %s", err, output)
+			}
+		}
+
+		// Verify binary exists and is executable
+		if _, err := os.Stat(testBinary); err != nil {
+			t.Fatalf("Binary %s not found after build", testBinary)
+		}
+
+		// Make executable
+		if err := os.Chmod(testBinary, 0755); err != nil {
+			t.Fatalf("Failed to make binary executable: %v", err)
+		}
+
+		// Generate unique test profile name
+		testProfile = fmt.Sprintf("test-profile-%d", time.Now().UnixNano())
+
+		t.Logf("Testing binary: %s", testBinary)
+		t.Logf("Test profile: %s", testProfile)
+
+		initialized = true
 	}
 
-	// Verify binary exists and is executable
-	if _, err := os.Stat(testBinary); err != nil {
-		t.Fatalf("Binary %s not found after build", testBinary)
-	}
-
-	// Make executable
-	if err := os.Chmod(testBinary, 0755); err != nil {
-		t.Fatalf("Failed to make binary executable: %v", err)
-	}
-
-	// Generate unique test profile name
-	testProfile = fmt.Sprintf("test-profile-%d", time.Now().UnixNano())
-
-	t.Logf("Testing binary: %s", testBinary)
-	t.Logf("Test profile: %s", testProfile)
-
-	initialized = true
+	// Start test server
+	startTestServer()
 }
 
 // runWeb executes the web binary with given arguments and returns stdout, stderr, and error
@@ -75,55 +138,61 @@ func runWeb(args ...string) (string, string, error) {
 
 func TestBasicScraping(t *testing.T) {
 	setupTest(t)
-	
-	stdout, stderr, err := runWeb("https://httpbin.org/html", "--truncate-after", "200")
+
+	stdout, stderr, err := runWeb(testServerURL, "--truncate-after", "500")
 	if err != nil {
 		t.Fatalf("Basic scraping failed: %v\nStderr: %s", err, stderr)
 	}
-	
-	if !strings.Contains(stdout, "Herman Melville") {
+
+	if !strings.Contains(stdout, "Test Page") {
 		t.Errorf("Expected content not found in output")
 	}
-	
-	if !strings.Contains(stdout, "https://httpbin.org/html") {
+
+	if !strings.Contains(stdout, testServerURL) {
 		t.Errorf("Expected URL header not found in output")
 	}
 }
 
 func TestRawHTMLOutput(t *testing.T) {
 	setupTest(t)
-	
-	stdout, stderr, err := runWeb("https://example.com", "--raw", "--truncate-after", "200")
+
+	stdout, stderr, err := runWeb(testServerURL, "--raw", "--truncate-after", "500")
 	if err != nil {
 		t.Fatalf("Raw HTML output failed: %v\nStderr: %s", err, stderr)
 	}
-	
-	if !strings.Contains(stdout, "<!DOCTYPE html>") {
-		t.Errorf("Expected DOCTYPE not found in raw output. Got: %s", stdout)
-	}
-	
+
+	// Selenium's PageSource returns DOM representation without DOCTYPE
+	// Check for essential HTML structure instead
 	if !strings.Contains(stdout, "<html>") {
 		t.Errorf("Expected HTML tag not found in raw output")
+	}
+
+	if !strings.Contains(stdout, "<title>Test Page</title>") {
+		t.Errorf("Expected title tag not found in raw output")
+	}
+
+	if !strings.Contains(stdout, "<body>") {
+		t.Errorf("Expected body tag not found in raw output")
 	}
 }
 
 func TestJavaScriptExecution(t *testing.T) {
 	setupTest(t)
-	
+
 	testMessage := "test-message-12345"
 	stdout, stderr, err := runWeb(
-		"https://httpbin.org/html",
+		testServerURL,
 		"--js", fmt.Sprintf("console.log('%s'); document.title = 'Modified Title';", testMessage),
 		"--truncate-after", "300",
 	)
 	if err != nil {
 		t.Fatalf("JavaScript execution failed: %v\nStderr: %s", err, stderr)
 	}
-	
+
 	if !strings.Contains(stdout, testMessage) {
 		t.Errorf("Console message '%s' not found in output. Got: %s", testMessage, stdout)
 	}
-	
+
 	if !strings.Contains(stdout, "CONSOLE OUTPUT:") {
 		t.Errorf("Console output section not found")
 	}
@@ -136,7 +205,7 @@ func TestScreenshotFunctionality(t *testing.T) {
 	defer os.Remove(screenshotFile) // Cleanup
 	
 	stdout, stderr, err := runWeb(
-		"https://httpbin.org/html",
+		testServerURL,
 		"--screenshot", screenshotFile,
 		"--truncate-after", "100",
 	)
@@ -169,7 +238,7 @@ func TestProfileSessionPersistence(t *testing.T) {
 	// Store value in localStorage
 	_, stderr, err := runWeb(
 		"--profile", profile,
-		"https://httpbin.org/html",
+		testServerURL,
 		"--js", fmt.Sprintf("localStorage.setItem('%s', '%s'); console.log('Stored:', localStorage.getItem('%s'));", testKey, testValue, testKey),
 		"--truncate-after", "100",
 	)
@@ -180,7 +249,7 @@ func TestProfileSessionPersistence(t *testing.T) {
 	// Retrieve value from localStorage
 	stdout, stderr, err := runWeb(
 		"--profile", profile,
-		"https://httpbin.org/html", 
+		testServerURL, 
 		"--js", fmt.Sprintf("console.log('Retrieved:', localStorage.getItem('%s'));", testKey),
 		"--truncate-after", "200",
 	)
@@ -210,7 +279,7 @@ func TestProfileIsolation(t *testing.T) {
 	// Store value in profile1
 	_, stderr, err := runWeb(
 		"--profile", profile1,
-		"https://httpbin.org/html",
+		testServerURL,
 		"--js", fmt.Sprintf("localStorage.setItem('%s', 'profile1-value');", testKey),
 		"--truncate-after", "100",
 	)
@@ -221,7 +290,7 @@ func TestProfileIsolation(t *testing.T) {
 	// Check that profile2 doesn't see the value
 	stdout, stderr, err := runWeb(
 		"--profile", profile2,
-		"https://httpbin.org/html",
+		testServerURL,
 		"--js", fmt.Sprintf("console.log('Profile2 sees:', localStorage.getItem('%s'));", testKey),
 		"--truncate-after", "200",
 	)
@@ -243,24 +312,21 @@ func TestProfileIsolation(t *testing.T) {
 
 func TestFormHandling(t *testing.T) {
 	setupTest(t)
-	
+
 	stdout, stderr, err := runWeb(
-		"https://httpbin.org/forms/post",
+		testServerURL+"/form",
 		"--js", `
-			const form = document.createElement('form');
-			form.id = 'test-form';
-			form.innerHTML = '<input name="username" type="text"><input name="password" type="password">';
-			document.body.appendChild(form);
-			console.log('Form created with', form.querySelectorAll('input').length, 'inputs');
+			const form = document.querySelector('#test-form');
+			console.log('Form found with', form.querySelectorAll('input').length, 'inputs');
 		`,
 		"--truncate-after", "300",
 	)
 	if err != nil {
 		t.Fatalf("Form handling test failed: %v\nStderr: %s", err, stderr)
 	}
-	
-	if !strings.Contains(stdout, "Form created with 2 inputs") {
-		t.Errorf("Form creation not detected. Expected 'Form created with 2 inputs'. Got: %s", stdout)
+
+	if !strings.Contains(stdout, "Form found with 2 inputs") {
+		t.Errorf("Form detection failed. Expected 'Form found with 2 inputs'. Got: %s", stdout)
 	}
 }
 
@@ -294,12 +360,12 @@ func TestPhoenixLiveViewDetection(t *testing.T) {
 	setupTest(t)
 	
 	stdout, stderr, err := runWeb(
-		"https://httpbin.org/html",
+		testServerURL+"/liveview",
 		"--js", `
-			const div = document.createElement('div');
-			div.setAttribute('data-phx-session', 'test-session');
-			document.body.appendChild(div);
-			console.log('LiveView simulation added');
+			const div = document.querySelector('[data-phx-session]');
+			if (div) {
+				console.log('LiveView element detected');
+			}
 		`,
 		"--truncate-after", "200",
 	)
@@ -307,8 +373,8 @@ func TestPhoenixLiveViewDetection(t *testing.T) {
 		t.Fatalf("Phoenix LiveView detection test failed: %v\nStderr: %s", err, stderr)
 	}
 	
-	if !strings.Contains(stdout, "LiveView simulation added") {
-		t.Errorf("LiveView simulation not detected. Got: %s", stdout)
+	if !strings.Contains(stdout, "LiveView element detected") {
+		t.Errorf("LiveView detection failed. Got: %s", stdout)
 	}
 }
 
@@ -316,7 +382,7 @@ func TestMultipleConsoleMessageTypes(t *testing.T) {
 	setupTest(t)
 	
 	stdout, stderr, err := runWeb(
-		"https://httpbin.org/html",
+		testServerURL,
 		"--js", `
 			console.log('info message');
 			console.warn('warning message'); 
@@ -344,7 +410,7 @@ func TestMultipleConsoleMessageTypes(t *testing.T) {
 func TestContentTruncation(t *testing.T) {
 	setupTest(t)
 	
-	stdout, stderr, err := runWeb("https://httpbin.org/html", "--truncate-after", "50")
+	stdout, stderr, err := runWeb(testServerURL, "--truncate-after", "50")
 	if err != nil {
 		t.Fatalf("Content truncation test failed: %v\nStderr: %s", err, stderr)
 	}
@@ -371,7 +437,7 @@ func TestAll(t *testing.T) {
 	
 	stdout, stderr, err := runWeb(
 		"--profile", profile,
-		"https://httpbin.org/html",
+		testServerURL,
 		"--screenshot", screenshotFile,
 		"--js", `
 			console.log('Starting comprehensive test');
@@ -392,7 +458,7 @@ func TestAll(t *testing.T) {
 		"Starting comprehensive test",
 		"Test completed successfully", 
 		fmt.Sprintf("Screenshot saved to %s", screenshotFile),
-		"https://httpbin.org/html",
+		testServerURL,
 	}
 	
 	for _, check := range checks {
