@@ -25,15 +25,19 @@ type FormInput struct {
 }
 
 type Config struct {
-	URL            string
-	Profile        string
-	FormID         string
-	Inputs         []FormInput
-	AfterSubmitURL string
-	JSCode         string
-	ScreenshotPath string
-	TruncateAfter  int
-	RawFlag        bool
+	URL                 string
+	Profile             string
+	FormID              string
+	Inputs              []FormInput
+	ButtonName          string
+	ButtonValue         string
+	AfterSubmitURL      string
+	JSCode              string
+	ScreenshotPath      string
+	TruncateAfter       int
+	RawFlag             bool
+	WaitForNavigation   bool
+	NavigationTimeout   int
 }
 
 func main() {
@@ -457,7 +461,7 @@ func processRequest(config Config) (string, error) {
 	}
 
 	// Handle form submission if specified
-	if config.FormID != "" && len(config.Inputs) > 0 {
+	if config.FormID != "" && (len(config.Inputs) > 0 || config.ButtonName != "") {
 		err = handleForm(wd, config, isLiveView.(bool))
 		if err != nil {
 			return "", fmt.Errorf("error handling form: %v", err)
@@ -469,6 +473,48 @@ func processRequest(config Config) (string, error) {
 		_, err = wd.ExecuteScript(config.JSCode, nil)
 		if err != nil {
 			fmt.Printf("Warning: JavaScript execution failed: %v\n", err)
+		}
+
+		// Wait for navigation if requested
+		if config.WaitForNavigation {
+			timeout := time.Duration(config.NavigationTimeout) * time.Millisecond
+			if config.NavigationTimeout == 0 {
+				timeout = 5 * time.Second
+			}
+			fmt.Printf("Waiting for navigation (timeout: %v)...\n", timeout)
+
+			// Get current URL before navigation
+			currentURL, err := wd.CurrentURL()
+			if err != nil {
+				currentURL = ""
+			}
+
+			// Wait for URL to change or timeout
+			time.Sleep(500 * time.Millisecond) // Brief delay for navigation to start
+
+			navigationOccurred := false
+			err = wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+				newURL, err := wd.CurrentURL()
+				if err != nil {
+					return false, nil
+				}
+				if newURL != currentURL {
+					navigationOccurred = true
+					return true, nil
+				}
+				return false, nil
+			}, timeout)
+
+			if navigationOccurred {
+				// Wait for page to be fully loaded
+				err = waitForFunction(wd, "return document.readyState === 'complete'", 3*time.Second)
+				if err != nil {
+					fmt.Printf("Warning: Page load wait timed out: %v\n", err)
+				} else {
+				}
+			} else {
+				fmt.Println("Warning: No navigation detected within timeout")
+			}
 		}
 	}
 
@@ -635,24 +681,64 @@ func handleForm(wd selenium.WebDriver, config Config, isLiveView bool) error {
 		fmt.Println("LiveView form submitted and loading completed")
 	} else {
 		// For regular forms, click submit button or press enter
-		submitSelector := fmt.Sprintf("#%s input[type='submit'], #%s button[type='submit']", config.FormID, config.FormID)
-		elem, err := wd.FindElement(selenium.ByCSSSelector, submitSelector)
-		if err != nil {
-			// Try pressing Enter on the form if no submit button
-			formSelector := fmt.Sprintf("#%s", config.FormID)
-			formElem, err := wd.FindElement(selenium.ByCSSSelector, formSelector)
-			if err != nil {
-				return fmt.Errorf("could not submit form: %v", err)
+		var elem selenium.WebElement
+		var err error
+
+		// If button name/value specified, try to find that specific button
+		if config.ButtonName != "" {
+			var buttonSelector string
+			// Escape brackets in CSS selector
+			escapedName := strings.ReplaceAll(strings.ReplaceAll(config.ButtonName, "[", "\\["), "]", "\\]")
+			if config.ButtonValue != "" {
+				buttonSelector = fmt.Sprintf("#%s button[name='%s'][value='%s']", config.FormID, escapedName, config.ButtonValue)
+			} else {
+				buttonSelector = fmt.Sprintf("#%s button[name='%s']", config.FormID, escapedName)
 			}
-			if err := formElem.SendKeys(selenium.EnterKey); err != nil {
-				return fmt.Errorf("could not submit form: %v", err)
+			elem, err = wd.FindElement(selenium.ByCSSSelector, buttonSelector)
+			if err != nil {
+				return fmt.Errorf("could not find button with name='%s' (selector: %s): %v", config.ButtonName, buttonSelector, err)
 			}
 		} else {
-			if err := elem.Click(); err != nil {
-				return fmt.Errorf("could not click submit button: %v", err)
+			// Default: look for standard submit button
+			submitSelector := fmt.Sprintf("#%s input[type='submit'], #%s button[type='submit']", config.FormID, config.FormID)
+			elem, err = wd.FindElement(selenium.ByCSSSelector, submitSelector)
+			if err != nil {
+				// Try pressing Enter on the form if no submit button
+				formSelector := fmt.Sprintf("#%s", config.FormID)
+				formElem, err := wd.FindElement(selenium.ByCSSSelector, formSelector)
+				if err != nil {
+					return fmt.Errorf("could not submit form: %v", err)
+				}
+				if err := formElem.SendKeys(selenium.EnterKey); err != nil {
+					return fmt.Errorf("could not submit form: %v", err)
+				}
+				fmt.Println("Form submitted")
+				return nil
 			}
 		}
+
+		if err := elem.Click(); err != nil {
+			return fmt.Errorf("could not click submit button: %v", err)
+		}
 		fmt.Println("Form submitted")
+
+		// Wait for navigation after form submission
+		time.Sleep(500 * time.Millisecond)
+		currentURL, _ := wd.CurrentURL()
+
+		// Wait up to 5 seconds for navigation
+		err = wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+			newURL, err := wd.CurrentURL()
+			if err != nil {
+				return false, nil
+			}
+			return newURL != currentURL, nil
+		}, 5*time.Second)
+
+		if err == nil {
+			// Navigation occurred, wait for page load
+			waitForFunction(wd, "return document.readyState === 'complete'", 3*time.Second)
+		}
 	}
 
 	return nil
@@ -660,8 +746,10 @@ func handleForm(wd selenium.WebDriver, config Config, isLiveView bool) error {
 
 func parseArgs() Config {
 	config := Config{
-		TruncateAfter: DEFAULT_TRUNCATE_AFTER,
-		Profile:       "default",
+		TruncateAfter:     DEFAULT_TRUNCATE_AFTER,
+		Profile:           "default",
+		WaitForNavigation: false,
+		NavigationTimeout: 0,
 	}
 
 	args := os.Args[1:]
@@ -722,6 +810,27 @@ func parseArgs() Config {
 				config.Profile = args[i+1]
 				i++
 			}
+		case "--wait-for-navigation":
+			config.WaitForNavigation = true
+			if i+1 < len(args) {
+				// Check if next arg is a number (timeout in ms)
+				if val, err := strconv.Atoi(args[i+1]); err == nil && val > 0 {
+					config.NavigationTimeout = val
+					i++
+				}
+			}
+		case "--button":
+			if i+1 < len(args) {
+				config.ButtonName = args[i+1]
+				i++
+				if i+1 < len(args) && args[i+1] == "--value" {
+					i++
+					if i+1 < len(args) {
+						config.ButtonValue = args[i+1]
+						i++
+					}
+				}
+			}
 		default:
 			if config.URL == "" && !strings.HasPrefix(arg, "--") {
 				config.URL = arg
@@ -738,16 +847,18 @@ func printHelp() {
 Usage: web <url> [options]
 
 Options:
-  --help                     Show this help message
-  --raw                      Output raw page instead of converting to markdown
-  --truncate-after <number>  Truncate output after <number> characters and append a notice (default: %d)
-  --screenshot <filepath>    Take a screenshot of the page and save it to the given filepath
-  --form <id>                The id of the form for inputs
-  --input <name>             Specify the name attribute for a form input field
-  --value <value>            Provide the value to fill for the last --input field
-  --after-submit <url>       After form submission and navigation, load this URL before converting to markdown
-  --js <code>                Execute JavaScript code on the page after it loads
-  --profile <name>           Use or create named session profile (default: "default")
+  --help                        Show this help message
+  --raw                         Output raw page instead of converting to markdown
+  --truncate-after <number>     Truncate output after <number> characters and append a notice (default: %d)
+  --screenshot <filepath>       Take a screenshot of the page and save it to the given filepath
+  --form <id>                   The id of the form for inputs
+  --input <name>                Specify the name attribute for a form input field
+  --value <value>               Provide the value to fill for the last --input field
+  --button <name>               Specify the name attribute of the button to click (optional --value to match specific value)
+  --after-submit <url>          After form submission and navigation, load this URL before converting to markdown
+  --js <code>                   Execute JavaScript code on the page after it loads
+  --wait-for-navigation [ms]    Wait for navigation after JavaScript execution (default timeout: 5000ms)
+  --profile <name>              Use or create named session profile (default: "default")
 
 Phoenix LiveView Support:
 This tool automatically detects Phoenix LiveView applications and properly handles:
@@ -759,6 +870,8 @@ Examples:
   web https://example.com
   web https://example.com --screenshot page.png --truncate-after 5000
   web localhost:4000/login --form login_form --input email --value test@example.com --input password --value secret
+  web localhost:4000/confirm --form login_form --button "user[remember_me]" --value "true"
+  web localhost:4000/confirm --js "document.querySelector('button').click()" --wait-for-navigation 3000
 `, DEFAULT_TRUNCATE_AFTER)
 }
 

@@ -420,21 +420,151 @@ func TestContentTruncation(t *testing.T) {
 	}
 }
 
+func TestButtonClick(t *testing.T) {
+	setupTest(t)
+
+	// Create a test server handler with button form
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/button-form", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			http.Redirect(w, r, "/success", http.StatusSeeOther)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Button Test</title></head>
+<body>
+<form id="login_form" method="POST">
+<input name="email" type="text">
+<button type="submit" name="user[remember_me]" value="true">Keep me logged in</button>
+<button type="submit" name="action" value="login">Login</button>
+</form>
+</body>
+</html>`)
+	})
+
+	mux.HandleFunc("/success", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Success</title></head>
+<body><h1>Login Successful</h1></body>
+</html>`)
+	})
+
+	// Start temporary server
+	server := &http.Server{Addr: ":9998", Handler: mux}
+	go server.ListenAndServe()
+	defer server.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	profile := fmt.Sprintf("test-button-%d", time.Now().UnixNano())
+	defer func() {
+		homeDir, _ := os.UserHomeDir()
+		profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", profile)
+		os.RemoveAll(profileDir)
+	}()
+
+	// Test clicking specific button with name and value
+	stdout, stderr, err := runWeb(
+		"--profile", profile,
+		"http://localhost:9998/button-form",
+		"--form", "login_form",
+		"--input", "email", "--value", "test@example.com",
+		"--button", "user[remember_me]", "--value", "true",
+		"--truncate-after", "500",
+	)
+	if err != nil {
+		t.Fatalf("Button click test failed: %v\nStderr: %s\nStdout: %s", err, stderr, stdout)
+	}
+
+	// Should navigate to success page
+	if !strings.Contains(stdout, "Login Successful") {
+		t.Errorf("Expected to see success page after button click. Got: %s", stdout)
+	}
+}
+
+func TestWaitForNavigation(t *testing.T) {
+	setupTest(t)
+
+	// Create test server with delayed navigation
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/delayed-nav", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Delayed Nav Test</title></head>
+<body>
+<h1>Initial Page</h1>
+</body>
+</html>`)
+	})
+
+	mux.HandleFunc("/destination", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Destination</title></head>
+<body><h1>Navigation Completed</h1></body>
+</html>`)
+	})
+
+	// Start temporary server
+	server := &http.Server{Addr: ":9997", Handler: mux}
+	go server.ListenAndServe()
+	defer server.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	profile := fmt.Sprintf("test-nav-%d", time.Now().UnixNano())
+	defer func() {
+		homeDir, _ := os.UserHomeDir()
+		profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", profile)
+		os.RemoveAll(profileDir)
+	}()
+
+	// Test navigation wait after JavaScript
+	stdout, stderr, err := runWeb(
+		"--profile", profile,
+		"http://localhost:9997/delayed-nav",
+		"--js", "setTimeout(() => { window.location.href = 'http://localhost:9997/destination'; }, 100);",
+		"--wait-for-navigation", "3000",
+		"--truncate-after", "500",
+	)
+	if err != nil {
+		t.Fatalf("Wait for navigation test failed: %v\nStderr: %s\nStdout: %s", err, stderr, stdout)
+	}
+
+	// Should show destination page content
+	if !strings.Contains(stdout, "Navigation Completed") {
+		t.Errorf("Expected to see destination page after navigation wait. Got stdout: %s\nGot stderr: %s", stdout, stderr)
+	}
+
+	// Should see the waiting message in stderr (where fmt.Printf outputs go)
+	output := stdout + stderr
+	if !strings.Contains(output, "Waiting for navigation") {
+		t.Errorf("Expected to see 'Waiting for navigation' message. Got: %s", output)
+	}
+}
+
 // TestAll runs a comprehensive test to ensure everything works together
 func TestAll(t *testing.T) {
 	setupTest(t)
-	
+
 	// Run a complex test combining multiple features
 	screenshotFile := fmt.Sprintf("test-all-%d.png", time.Now().UnixNano())
 	defer os.Remove(screenshotFile)
-	
+
 	profile := fmt.Sprintf("test-all-%d", time.Now().UnixNano())
 	defer func() {
 		homeDir, _ := os.UserHomeDir()
 		profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", profile)
 		os.RemoveAll(profileDir)
 	}()
-	
+
 	stdout, stderr, err := runWeb(
 		"--profile", profile,
 		testServerURL,
@@ -452,21 +582,21 @@ func TestAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Comprehensive test failed: %v\nStderr: %s", err, stderr)
 	}
-	
+
 	// Verify multiple aspects
 	checks := []string{
 		"Starting comprehensive test",
-		"Test completed successfully", 
+		"Test completed successfully",
 		fmt.Sprintf("Screenshot saved to %s", screenshotFile),
 		testServerURL,
 	}
-	
+
 	for _, check := range checks {
 		if !strings.Contains(stdout, check) {
 			t.Errorf("Comprehensive test missing check: '%s'", check)
 		}
 	}
-	
+
 	// Verify screenshot was created
 	if _, err := os.Stat(screenshotFile); err != nil {
 		t.Errorf("Screenshot file not created in comprehensive test")
