@@ -65,7 +65,47 @@ func startTestServer() {
 <body>
 <div data-phx-session="test-session" class="phx-connected">
 <h1>LiveView Page</h1>
+<a href="/liveview-target" id="lv-link">Navigate</a>
 </div>
+</body>
+</html>`)
+		})
+
+		// LiveView navigation target
+		mux.HandleFunc("/liveview-target", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>LiveView Target</title></head>
+<body>
+<div data-phx-session="test-session" class="phx-connected">
+<h1>Navigation Successful</h1>
+</div>
+</body>
+</html>`)
+		})
+
+		// Regular page with button that triggers navigation
+		mux.HandleFunc("/button-click", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Button Click Test</title></head>
+<body>
+<h1>Click Button to Navigate</h1>
+<button id="nav-button" onclick="window.location.href='/button-target'">Click Me</button>
+</body>
+</html>`)
+		})
+
+		// Button click target page
+		mux.HandleFunc("/button-target", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head><title>Button Target</title></head>
+<body>
+<h1>Button Click Navigation Successful</h1>
 </body>
 </html>`)
 		})
@@ -470,5 +510,104 @@ func TestAll(t *testing.T) {
 	// Verify screenshot was created
 	if _, err := os.Stat(screenshotFile); err != nil {
 		t.Errorf("Screenshot file not created in comprehensive test")
+	}
+}
+
+func TestLiveViewNavigationWithJavaScript(t *testing.T) {
+	setupTest(t)
+
+	// Use window.location.href for more reliable navigation testing
+	stdout, stderr, err := runWeb(
+		testServerURL+"/liveview",
+		"--js", `window.location.href = '/liveview-target';`,
+		"--truncate-after", "500",
+	)
+	if err != nil {
+		t.Fatalf("LiveView navigation test failed: %v\nStderr: %s", err, stderr)
+	}
+
+	// Check for navigation messages - LiveView page should use LiveView navigation logic
+	if !strings.Contains(stdout, "Waiting for Phoenix LiveView navigation") {
+		t.Logf("Output: %s", stdout)
+		t.Errorf("Expected 'Waiting for Phoenix LiveView navigation' message")
+	}
+
+	// Check that we landed on the target page
+	if !strings.Contains(stdout, "Navigation Successful") {
+		t.Logf("Output: %s", stdout)
+		t.Errorf("Navigation did not complete successfully. Expected 'Navigation Successful'")
+	}
+}
+
+func TestRegularPageNavigationWithJavaScript(t *testing.T) {
+	setupTest(t)
+
+	// Use window.location.href for more reliable navigation testing
+	stdout, stderr, err := runWeb(
+		testServerURL+"/button-click",
+		"--js", `window.location.href = '/button-target';`,
+		"--truncate-after", "500",
+	)
+	if err != nil {
+		t.Fatalf("Regular page navigation test failed: %v\nStderr: %s", err, stderr)
+	}
+
+	// Check for navigation messages (should use generic navigation, not LiveView)
+	if !strings.Contains(stdout, "Waiting for page navigation") {
+		t.Logf("Output: %s", stdout)
+		t.Errorf("Expected 'Waiting for page navigation' message")
+	}
+
+	if !strings.Contains(stdout, "Navigation detected") || !strings.Contains(stdout, "Page load completed") {
+		t.Logf("Output: %s", stdout)
+		t.Errorf("Expected navigation completion messages")
+	}
+
+	// Check that we landed on the target page
+	if !strings.Contains(stdout, "Button Click Navigation Successful") {
+		t.Logf("Output: %s", stdout)
+		t.Errorf("Navigation did not complete successfully. Expected 'Button Click Navigation Successful'")
+	}
+}
+
+func TestLiveViewDetectionAndEventSetup(t *testing.T) {
+	setupTest(t)
+
+	stdout, stderr, err := runWeb(
+		testServerURL+"/liveview",
+		"--truncate-after", "300",
+	)
+	if err != nil {
+		t.Fatalf("LiveView detection test failed: %v\nStderr: %s", err, stderr)
+	}
+
+	// Should detect LiveView and wait for connection
+	if !strings.Contains(stdout, "Detected Phoenix LiveView page") {
+		t.Errorf("LiveView page detection failed. Expected 'Detected Phoenix LiveView page'. Got: %s", stdout)
+	}
+
+	if !strings.Contains(stdout, "Phoenix LiveView connected") {
+		t.Errorf("LiveView connection message not found. Got: %s", stdout)
+	}
+}
+
+func TestNonLiveViewPageDoesNotTriggerLiveViewLogic(t *testing.T) {
+	setupTest(t)
+
+	stdout, stderr, err := runWeb(
+		testServerURL+"/button-click",
+		"--truncate-after", "300",
+	)
+	if err != nil {
+		t.Fatalf("Non-LiveView page test failed: %v\nStderr: %s", err, stderr)
+	}
+
+	// Should NOT detect LiveView on regular pages
+	if strings.Contains(stdout, "Detected Phoenix LiveView page") {
+		t.Errorf("Regular page incorrectly detected as LiveView. Got: %s", stdout)
+	}
+
+	if strings.Contains(stdout, "Phoenix LiveView connected") {
+		t.Errorf("Regular page should not show LiveView connection message. Got: %s", stdout)
 	}
 }
