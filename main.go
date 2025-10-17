@@ -454,6 +454,22 @@ func processRequest(config Config) (string, error) {
 		} else {
 			fmt.Println("Phoenix LiveView connected")
 		}
+
+		// Set up navigation tracking using Phoenix events for all page interactions
+		_, err = wd.ExecuteScript(`
+			if (!window.__phxNavigationState) {
+				window.__phxNavigationState = { loading: false };
+				document.addEventListener('phx:page-loading-start', function() {
+					window.__phxNavigationState.loading = true;
+				});
+				document.addEventListener('phx:page-loading-stop', function() {
+					window.__phxNavigationState.loading = false;
+				});
+			}
+		`, nil)
+		if err != nil {
+			fmt.Printf("Warning: Could not inject Phoenix navigation listeners: %v\n", err)
+		}
 	}
 
 	// Handle form submission if specified
@@ -466,9 +482,75 @@ func processRequest(config Config) (string, error) {
 
 	// Execute JavaScript if provided
 	if config.JSCode != "" {
+		// Store current URL before executing JS
+		currentURL, _ := wd.CurrentURL()
+
 		_, err = wd.ExecuteScript(config.JSCode, nil)
 		if err != nil {
 			fmt.Printf("Warning: JavaScript execution failed: %v\n", err)
+		}
+
+		// Wait for navigation based on page type
+		if isLiveView.(bool) {
+			// For LiveView pages, wait for navigation using Phoenix events
+			fmt.Println("Waiting for Phoenix LiveView navigation...")
+
+			// First, wait briefly for loading to potentially start
+			time.Sleep(100 * time.Millisecond)
+
+			// Check if navigation started
+			err = waitForFunction(wd, "return window.__phxNavigationState && window.__phxNavigationState.loading === true", 1*time.Second)
+			if err != nil {
+				// No navigation event detected, check if URL changed
+				newURL, _ := wd.CurrentURL()
+				if newURL != currentURL {
+					fmt.Println("URL changed, waiting for page to stabilize...")
+					time.Sleep(500 * time.Millisecond)
+				} else {
+					fmt.Println("Info: No navigation detected (in-place LiveView update)")
+				}
+			} else {
+				// Navigation started, wait for it to complete
+				err = waitForFunction(wd, "return window.__phxNavigationState && window.__phxNavigationState.loading === false", 10*time.Second)
+				if err != nil {
+					fmt.Printf("Warning: Navigation did not complete within timeout: %v\n", err)
+				} else {
+					fmt.Println("Phoenix LiveView navigation completed")
+				}
+			}
+		} else {
+			// For non-LiveView pages, wait for traditional navigation
+			fmt.Println("Waiting for page navigation...")
+
+			// Brief delay to allow navigation to start
+			time.Sleep(200 * time.Millisecond)
+
+			// Wait for URL to change or timeout
+			navigationOccurred := false
+			err = wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+				newURL, err := wd.CurrentURL()
+				if err != nil {
+					return false, nil
+				}
+				if newURL != currentURL {
+					navigationOccurred = true
+					return true, nil
+				}
+				return false, nil
+			}, 5*time.Second)
+
+			if navigationOccurred {
+				// Wait for page to be fully loaded
+				fmt.Println("Navigation detected, waiting for page load...")
+				err = waitForFunction(wd, "return document.readyState === 'complete'", 5*time.Second)
+				if err != nil {
+					fmt.Printf("Warning: Page load wait timed out: %v\n", err)
+				} else {
+					fmt.Println("Page load completed")
+				}
+			} else {
+				fmt.Println("Info: No navigation detected (page update without URL change)")
+			}
 		}
 	}
 
@@ -610,7 +692,7 @@ func handleForm(wd selenium.WebDriver, config Config, isLiveView bool) error {
 	}
 
 	if isLiveView {
-		// For LiveView, submit form and wait for loading states
+		// For LiveView, use Phoenix event-based navigation tracking
 		formSelector := fmt.Sprintf("#%s", config.FormID)
 		formElem, err := wd.FindElement(selenium.ByCSSSelector, formSelector)
 		if err != nil {
@@ -622,17 +704,24 @@ func handleForm(wd selenium.WebDriver, config Config, isLiveView bool) error {
 			return fmt.Errorf("could not submit LiveView form: %v", err)
 		}
 
-		// Wait for LiveView loading states to complete
-		err = waitForFunction(wd, "return !document.querySelector('.phx-submit-loading')", 10*time.Second)
+		// Wait for Phoenix navigation to complete (phx:page-loading-start -> phx:page-loading-stop)
+		fmt.Println("Waiting for Phoenix LiveView navigation...")
+
+		// First, wait for loading to start (with short timeout)
+		err = waitForFunction(wd, "return window.__phxNavigationState && window.__phxNavigationState.loading === true", 2*time.Second)
 		if err != nil {
-			fmt.Printf("Warning: Could not wait for submit loading: %v\n", err)
-		}
-		err = waitForFunction(wd, "return !document.querySelector('.phx-change-loading')", 5*time.Second)
-		if err != nil {
-			fmt.Printf("Warning: Could not wait for change loading: %v\n", err)
+			fmt.Printf("Info: No navigation detected (this is normal for in-place updates)\n")
+		} else {
+			// If navigation started, wait for it to complete
+			err = waitForFunction(wd, "return window.__phxNavigationState && window.__phxNavigationState.loading === false", 10*time.Second)
+			if err != nil {
+				fmt.Printf("Warning: Navigation did not complete within timeout: %v\n", err)
+			} else {
+				fmt.Println("Phoenix LiveView navigation completed")
+			}
 		}
 
-		fmt.Println("LiveView form submitted and loading completed")
+		fmt.Println("LiveView form submitted")
 	} else {
 		// For regular forms, click submit button or press enter
 		submitSelector := fmt.Sprintf("#%s input[type='submit'], #%s button[type='submit']", config.FormID, config.FormID)
