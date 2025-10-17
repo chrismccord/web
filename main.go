@@ -86,16 +86,16 @@ func ensureFirefox() error {
 		if runtime.GOARCH == "arm64" {
 			firefoxSubdir = "firefox"
 			firefoxExec = filepath.Join(firefoxDir, firefoxSubdir, "Nightly.app", "Contents", "MacOS", "firefox")
-			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1482/firefox-mac-arm64.zip"
+			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-mac-arm64.zip"
 		} else {
 			firefoxSubdir = "firefox"
 			firefoxExec = filepath.Join(firefoxDir, firefoxSubdir, "Nightly.app", "Contents", "MacOS", "firefox")
-			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1482/firefox-mac.zip"
+			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-mac.zip"
 		}
 	case "linux":
 		firefoxSubdir = "firefox"
-		firefoxExec = filepath.Join(firefoxDir, firefoxSubdir, "firefox", "firefox")
-		firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1482/firefox-linux.zip"
+		firefoxExec = filepath.Join(firefoxDir, firefoxSubdir, "firefox")
+		firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-ubuntu-22.04.zip"
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
@@ -371,7 +371,7 @@ func processRequest(config Config) (string, error) {
 	case "darwin":
 		firefoxExec = filepath.Join(firefoxDir, "firefox", "Nightly.app", "Contents", "MacOS", "firefox")
 	case "linux":
-		firefoxExec = filepath.Join(firefoxDir, "firefox", "firefox", "firefox")
+		firefoxExec = filepath.Join(firefoxDir, "firefox", "firefox")
 	}
 
 	// Start geckodriver service
