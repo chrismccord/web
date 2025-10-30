@@ -30,7 +30,19 @@ web https://login.example.com \
 - **Form filling** - Automated form interaction with LiveView-aware submissions
 - **Session persistence** - Maintains cookies and authentication across runs with profiles
 
-## Quick Start
+## Installation
+
+### Using go install (Recommended)
+
+If you have Go 1.21+ installed:
+
+```bash
+go install github.com/chrismccord/web@latest
+```
+
+This will install the `web` binary to your `$GOPATH/bin` directory (typically `~/go/bin`). Make sure this directory is in your `PATH`.
+
+### Building from source
 
 1. **Build for current platform**:
    ```bash
