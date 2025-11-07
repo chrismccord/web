@@ -51,6 +51,17 @@ This creates:
 - `web-darwin-amd64` - macOS Intel
 - `web-linux-amd64` - Linux x86_64
 
+### Arch Linux / Manjaro
+
+`web` is available on the Arch User Repository (AUR) as a rolling package:
+
+```bash
+yay -S web-git
+```
+
+This installs the latest development version directly from the upstream repository using the official AUR build script:
+[web-git on AUR](https://aur.archlinux.org/packages/web-git)
+
 ## Usage Examples
 
 ```bash
