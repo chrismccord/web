@@ -1,4 +1,4 @@
-module web
+module github.com/chrismccord/web
 
 go 1.24
 
