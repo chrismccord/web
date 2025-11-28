@@ -43,13 +43,17 @@ You can then `sudo cp web /usr/local/bin` to make it available system wide
 ### Multi-platform Build
 
 For releases or deployment to other systems:
+
 ```bash
 make build        # Build all platforms
 ```
+
 This creates:
+
 - `web-darwin-arm64` - macOS Apple Silicon (M1/M2/M3)
 - `web-darwin-amd64` - macOS Intel
 - `web-linux-amd64` - Linux x86_64
+- `web-linux-arm64` - Linux ARM64
 
 ## Usage Examples
 
@@ -106,7 +110,7 @@ This tool has special support for Phoenix LiveView applications:
 
 ## System Requirements
 
-- **Linux x64 or macOS** (Ubuntu 18.04+, RHEL 7+, Debian 9+, Arch Linux, macOS 10.12+)
+- **Linux x64/ARM64 or macOS** (Ubuntu 18.04+, RHEL 7+, Debian 9+, Arch Linux, macOS 10.12+)
 - **~102MB free space** (for Firefox and geckodriver on first run)
 
 ### Linux System Packages
@@ -120,7 +124,6 @@ sudo apt install libgtk-3-0 libdbus-glib-1-2 libx11-xcb1 libxcb1 libxcomposite1 
 # Additional packages for multimedia and fonts
 sudo apt install libpulse0 libcanberra-gtk3-module packagekit-gtk3-module libdbusmenu-glib4 libdbusmenu-gtk3-4
 ```
-
 
 ## Testing
 
@@ -136,7 +139,7 @@ This will build binaries for all platforms and run tests
 
 ```bash
 make              # Build for current platform (./web)
-make build        # Build all platforms (darwin-arm64, darwin-amd64, linux-amd64)
+make build        # Build all platforms (darwin-arm64, darwin-amd64, linux-amd64, linux-arm64)
 make test         # Build and run tests
 make clean        # Remove build artifacts
 ```
@@ -147,7 +150,7 @@ make clean        # Remove build artifacts
 
 ## Architecture
 
-- **Single Go binary with standalone headless firefox download on first run** 
+- **Single Go binary with standalone headless firefox download on first run**
 - **Auto-download on first run** - Firefox and geckodriver downloaded to `~/.web-firefox/`
 - **Self-contained directory structure**:
   - `~/.web-firefox/firefox/` - Headless Firefox browser
@@ -158,5 +161,3 @@ make clean        # Remove build artifacts
 ## License
 
 MIT License
-
-

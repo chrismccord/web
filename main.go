@@ -95,7 +95,11 @@ func ensureFirefox() error {
 	case "linux":
 		firefoxSubdir = "firefox"
 		firefoxExec = filepath.Join(firefoxDir, firefoxSubdir, "firefox")
-		firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-ubuntu-22.04.zip"
+		if runtime.GOARCH == "arm64" {
+			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-ubuntu-22.04-arm64.zip"
+		} else {
+			firefoxUrl = "https://playwright.azureedge.net/builds/firefox/1490/firefox-ubuntu-22.04.zip"
+		}
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
@@ -142,7 +146,12 @@ func ensureGeckodriver() error {
 		}
 	case "linux":
 		geckoExec = filepath.Join(geckoDir, "geckodriver")
-		geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux64.tar.gz"
+
+		if runtime.GOARCH == "arm64" {
+			geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux-aarch64.tar.gz"
+		} else {
+			geckoUrl = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux64.tar.gz"
+		}
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
@@ -160,7 +169,7 @@ func ensureGeckodriver() error {
 	}
 
 	// Make executable
-	if err := os.Chmod(geckoExec, 0755); err != nil {
+	if err := os.Chmod(geckoExec, 0o755); err != nil {
 		return fmt.Errorf("failed to make geckodriver executable: %v", err)
 	}
 
@@ -170,7 +179,7 @@ func ensureGeckodriver() error {
 
 func downloadAndExtractTarGz(url, destDir string) error {
 	// Create destination directory
-	err := os.MkdirAll(destDir, 0755)
+	err := os.MkdirAll(destDir, 0o755)
 	if err != nil {
 		return fmt.Errorf("could not create directory %s: %v", destDir, err)
 	}
@@ -266,7 +275,7 @@ func findExecutable(name string) (string, error) {
 
 func downloadFirefox(url, destDir string) error {
 	// Create destination directory
-	err := os.MkdirAll(destDir, 0755)
+	err := os.MkdirAll(destDir, 0o755)
 	if err != nil {
 		return fmt.Errorf("could not create directory %s: %v", destDir, err)
 	}
@@ -312,7 +321,7 @@ func extractZip(src, dest string) error {
 	defer r.Close()
 
 	// Create destination directory
-	os.MkdirAll(dest, 0755)
+	os.MkdirAll(dest, 0o755)
 
 	// Extract files
 	for _, f := range r.File {
@@ -330,7 +339,7 @@ func extractZip(src, dest string) error {
 		}
 
 		// Create directories for file
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			rc.Close()
 			return err
 		}
@@ -383,7 +392,7 @@ func processRequest(config Config) (string, error) {
 
 	// Configure Firefox with profile
 	profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", config.Profile)
-	os.MkdirAll(profileDir, 0755)
+	os.MkdirAll(profileDir, 0o755)
 
 	caps := selenium.Capabilities{
 		"browserName": "firefox",
@@ -560,7 +569,7 @@ func processRequest(config Config) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("error taking screenshot: %v", err)
 		}
-		err = os.WriteFile(config.ScreenshotPath, screenshot, 0644)
+		err = os.WriteFile(config.ScreenshotPath, screenshot, 0o644)
 		if err != nil {
 			return "", fmt.Errorf("error saving screenshot: %v", err)
 		}
