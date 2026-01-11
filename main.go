@@ -34,6 +34,7 @@ type Config struct {
 	ScreenshotPath string
 	TruncateAfter  int
 	RawFlag        bool
+	WaitForCondition string
 }
 
 func main() {
@@ -554,6 +555,22 @@ func processRequest(config Config) (string, error) {
 		}
 	}
 
+	// Wait for custom condition if specified
+	if config.WaitForCondition != "" {
+		fmt.Printf("Waiting for condition: %s\n", config.WaitForCondition)
+		condition := strings.TrimSpace(config.WaitForCondition)
+		if strings.HasPrefix(strings.ToLower(condition), "return ") {
+			condition = strings.TrimSpace(condition[7:])
+		}
+		conditionJS := fmt.Sprintf("return %s", condition)
+		err = waitForFunction(wd, conditionJS, 30*time.Second)
+		if err != nil {
+			fmt.Printf("Warning: Wait condition timed out after 30s: %v\n", err)
+		} else {
+			fmt.Println("Wait condition satisfied")
+		}
+	}
+
 	// Take screenshot if requested
 	if config.ScreenshotPath != "" {
 		screenshot, err := wd.Screenshot()
@@ -811,6 +828,11 @@ func parseArgs() Config {
 				config.Profile = args[i+1]
 				i++
 			}
+		case "--wait-for":
+			if i+1 < len(args) {
+				config.WaitForCondition = args[i+1]
+				i++
+			}
 		default:
 			if config.URL == "" && !strings.HasPrefix(arg, "--") {
 				config.URL = arg
@@ -836,6 +858,7 @@ Options:
   --value <value>            Provide the value to fill for the last --input field
   --after-submit <url>       After form submission and navigation, load this URL before converting to markdown
   --js <code>                Execute JavaScript code on the page after it loads
+  --wait-for <condition>     Wait for JS condition to be true (polls up to 30s). Use with --js for async operations
   --profile <name>           Use or create named session profile (default: "default")
 
 Phoenix LiveView Support:
@@ -848,6 +871,7 @@ Examples:
   web https://example.com
   web https://example.com --screenshot page.png --truncate-after 5000
   web localhost:4000/login --form login_form --input email --value test@example.com --input password --value secret
+  web https://example.com --js "loadData()" --wait-for "window.dataLoaded === true"
 `, DEFAULT_TRUNCATE_AFTER)
 }
 
