@@ -34,6 +34,32 @@ type Config struct {
 	ScreenshotPath string
 	TruncateAfter  int
 	RawFlag        bool
+	Width          int
+	Height         int
+	UserAgent      string
+}
+
+// devicePreset defines a viewport size (and optional mobile user-agent) used by
+// the --device flag to emulate common screen classes for responsive layout testing.
+//
+// Presets are named by size class rather than by device: headless Firefox
+// enforces a minimum window width (~450px), so per-device phone widths
+// (375, 390, 412, 430, ...) would all clamp to the same ~450px viewport.
+// "mobile" declares that floor directly instead of implying a per-device
+// fidelity the WebDriver window-resize approach cannot deliver.
+type devicePreset struct {
+	Width, Height int
+	UserAgent     string
+}
+
+const mobileUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+var devicePresets = map[string]devicePreset{
+	"mobile":    {450, 900, mobileUserAgent}, // Firefox headless width floor; mobile breakpoints still fire
+	"tablet":    {820, 1180, mobileUserAgent},
+	"desktop":   {1280, 800, ""},
+	"wide":      {1920, 1080, ""},
+	"ultrawide": {2560, 1440, ""},
 }
 
 func main() {
@@ -385,14 +411,19 @@ func processRequest(config Config) (string, error) {
 	profileDir := filepath.Join(homeDir, ".web-firefox", "profiles", config.Profile)
 	os.MkdirAll(profileDir, 0755)
 
+	prefs := map[string]interface{}{
+		"devtools.console.stdout.content": true,
+	}
+	if config.UserAgent != "" {
+		prefs["general.useragent.override"] = config.UserAgent
+	}
+
 	caps := selenium.Capabilities{
 		"browserName": "firefox",
 		"moz:firefoxOptions": map[string]interface{}{
 			"binary": firefoxExec,
 			"args":   []string{"-headless", "-profile", profileDir},
-			"prefs": map[string]interface{}{
-				"devtools.console.stdout.content": true,
-			},
+			"prefs":  prefs,
 			"log": map[string]interface{}{
 				"level": "trace",
 			},
@@ -405,6 +436,19 @@ func processRequest(config Config) (string, error) {
 		return "", fmt.Errorf("could not create webdriver: %v", err)
 	}
 	defer wd.Quit()
+
+	// Emulate a specific viewport (e.g. a phone width) so responsive/mobile
+	// layouts and CSS media queries render as they would on that device. In
+	// headless Firefox the window size maps directly to the layout viewport.
+	if config.Width > 0 {
+		height := config.Height
+		if height <= 0 {
+			height = 900
+		}
+		if err := wd.ResizeWindow("", config.Width, height); err != nil {
+			return "", fmt.Errorf("could not resize window: %v", err)
+		}
+	}
 
 	// Navigate to page
 	if err := wd.Get(baseURL); err != nil {
@@ -811,6 +855,29 @@ func parseArgs() Config {
 				config.Profile = args[i+1]
 				i++
 			}
+		case "--width":
+			if i+1 < len(args) {
+				if val, err := strconv.Atoi(args[i+1]); err == nil && val > 0 {
+					config.Width = val
+				}
+				i++
+			}
+		case "--height":
+			if i+1 < len(args) {
+				if val, err := strconv.Atoi(args[i+1]); err == nil && val > 0 {
+					config.Height = val
+				}
+				i++
+			}
+		case "--device":
+			if i+1 < len(args) {
+				if d, ok := devicePresets[strings.ToLower(args[i+1])]; ok {
+					config.Width = d.Width
+					config.Height = d.Height
+					config.UserAgent = d.UserAgent
+				}
+				i++
+			}
 		default:
 			if config.URL == "" && !strings.HasPrefix(arg, "--") {
 				config.URL = arg
@@ -837,6 +904,10 @@ Options:
   --after-submit <url>       After form submission and navigation, load this URL before converting to markdown
   --js <code>                Execute JavaScript code on the page after it loads
   --profile <name>           Use or create named session profile (default: "default")
+  --width <pixels>           Set the browser viewport width (triggers responsive/mobile CSS)
+  --height <pixels>          Set the browser viewport height (default: 900 when only --width is given)
+  --device <name>            Emulate a preset viewport size class (+ mobile user-agent where relevant)
+                             (mobile, tablet, desktop, wide, ultrawide)
 
 Phoenix LiveView Support:
 This tool automatically detects Phoenix LiveView applications and properly handles:
@@ -847,6 +918,8 @@ This tool automatically detects Phoenix LiveView applications and properly handl
 Examples:
   web https://example.com
   web https://example.com --screenshot page.png --truncate-after 5000
+  web https://example.com --device mobile --screenshot mobile.png
+  web https://example.com --width 390 --screenshot mobile.png
   web localhost:4000/login --form login_form --input email --value test@example.com --input password --value secret
 `, DEFAULT_TRUNCATE_AFTER)
 }
